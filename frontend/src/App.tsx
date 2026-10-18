@@ -4,6 +4,15 @@ import { flushSync } from "react-dom";
 import "./App.css";
 
 const API = (import.meta.env.VITE_API_BASE_URL || (window.location.hostname === "localhost" ? "http://localhost:8000" : window.location.origin)).replace(/\/$/, "");
+async function responseError(response: Response, fallback: string) {
+  const body = await response.text();
+  try {
+    const data: unknown = JSON.parse(body);
+    if (data && typeof data === "object" && "detail" in data && typeof data.detail === "string") return data.detail;
+  } catch { /* The platform may return plain text or HTML for server errors. */ }
+  const message = body.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  return message ? `${fallback} (${response.status}): ${message.slice(0, 180)}` : `${fallback} (${response.status})`;
+}
 type User = { id: number; email: string; full_name: string };
 type Item = { id: number; title: string; description: string | null; status: "open" | "in_progress" | "blocked" | "done"; priority: "low" | "medium" | "high" | "urgent"; version: number; team_id: number | null; assignee_id: number | null; created_at: string };
 type Team = { id: number; name: string; role: string };
@@ -43,9 +52,7 @@ function App() {
       headers: { ...(init.body ? { "Content-Type": "application/json" } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init.headers },
     });
     if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      const detail = body.detail;
-      throw new Error(typeof detail === "string" ? detail : `Request failed (${response.status})`);
+      throw new Error(await responseError(response, "Request failed"));
     }
     return response.status === 204 ? null : response.json();
   }, [token]);
@@ -112,11 +119,13 @@ function App() {
     const values = new FormData(event.currentTarget);
     try {
       if (authMode === "register") {
-        await fetch(`${API}/api/auth/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: values.get("email"), full_name: values.get("name"), password: values.get("password") }) }).then(async (response) => { if (!response.ok) { const data = await response.json(); throw new Error(data.detail || "Could not create account"); } });
+        const registration = await fetch(`${API}/api/auth/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: values.get("email"), full_name: values.get("name"), password: values.get("password") }) });
+        if (!registration.ok) throw new Error(await responseError(registration, "Could not create account"));
       }
       const login = new URLSearchParams({ username: String(values.get("email")), password: String(values.get("password")) });
       const response = await fetch(`${API}/api/auth/login`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: login });
-      const data = await response.json(); if (!response.ok) throw new Error(data.detail || "Could not sign in");
+      if (!response.ok) throw new Error(await responseError(response, "Could not sign in"));
+      const data = await response.json();
       const nextToken = data.access_token; localStorage.setItem("opsflow_token", nextToken); setToken(nextToken); setNotice(null);
     } catch (error) { setNotice({ kind: "error", text: error instanceof Error ? error.message : "Authentication failed." }); }
   }
