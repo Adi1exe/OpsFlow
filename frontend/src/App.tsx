@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, MouseEvent } from "react";
+import { flushSync } from "react-dom";
 import "./App.css";
 
 const API = (import.meta.env.VITE_API_BASE_URL || (window.location.hostname === "localhost" ? "http://localhost:8000" : window.location.origin)).replace(/\/$/, "");
@@ -8,6 +9,16 @@ type Item = { id: number; title: string; description: string | null; status: "op
 type Team = { id: number; name: string; role: string };
 type Activity = { id: number; actor_id: number; action: string; details: Record<string, unknown>; created_at: string };
 type Notice = { kind: "error" | "success"; text: string };
+type Theme = "light" | "dark";
+type ViewTransitionDocument = Document & { startViewTransition?: (update: () => void) => { ready: Promise<void> } };
+
+const STATUS_LABEL: Record<Item["status"], string> = { open: "Open", in_progress: "In progress", blocked: "Blocked", done: "Done" };
+const shortDate = (value: string) => new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(new Date(value));
+
+const iconProps = { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true } as const;
+const SunIcon = () => <svg {...iconProps}><circle cx="12" cy="12" r="4" /><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4" /></svg>;
+const MoonIcon = () => <svg {...iconProps}><path d="M20 14.2A8 8 0 0 1 9.8 4 8 8 0 1 0 20 14.2Z" /></svg>;
+const CloseIcon = () => <svg {...iconProps}><path d="M6 6l12 12M18 6 6 18" /></svg>;
 
 function App() {
   const [token, setToken] = useState(() => localStorage.getItem("opsflow_token") || "");
@@ -24,6 +35,7 @@ function App() {
   const [activity, setActivity] = useState<Activity[]>([]);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [loading, setLoading] = useState(false);
+  const [theme, setTheme] = useState<Theme>(() => (document.documentElement.dataset.theme === "dark" ? "dark" : "light"));
 
   const request = useCallback(async (path: string, init: RequestInit = {}) => {
     const response = await fetch(`${API}${path}`, {
@@ -63,6 +75,37 @@ function App() {
   const openCount = items.filter((item) => item.status !== "done").length;
   const blockedCount = items.filter((item) => item.status === "blocked").length;
   const urgentCount = items.filter((item) => item.priority === "urgent" && item.status !== "done").length;
+  const doneCount = items.filter((item) => item.status === "done").length;
+  const attentionCount = blockedCount + urgentCount;
+
+  // Theme toggle: the new theme is revealed as a circle growing out of the button.
+  function toggleTheme(event: MouseEvent<HTMLButtonElement>) {
+    const next: Theme = theme === "dark" ? "light" : "dark";
+    const commit = () => {
+      document.documentElement.dataset.theme = next;
+      setTheme(next);
+      try { localStorage.setItem("opsflow_theme", next); } catch { /* storage unavailable */ }
+    };
+    const doc = document as ViewTransitionDocument;
+    if (!doc.startViewTransition || window.matchMedia("(prefers-reduced-motion: reduce)").matches) { commit(); return; }
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const radius = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
+    const transition = doc.startViewTransition(() => flushSync(commit));
+    void transition.ready.then(() => {
+      document.documentElement.animate(
+        { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${radius}px at ${x}px ${y}px)`] },
+        { duration: 650, easing: "cubic-bezier(.4, 0, .2, 1)", pseudoElement: "::view-transition-new(root)" },
+      );
+    });
+  }
+
+  const themeButton = (
+    <button className="icon-button" onClick={toggleTheme} aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"} title={theme === "dark" ? "Light mode" : "Dark mode"}>
+      {theme === "dark" ? <SunIcon /> : <MoonIcon />}
+    </button>
+  );
 
   async function authenticate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setNotice(null);
@@ -107,21 +150,192 @@ function App() {
     catch (error) { setNotice({ kind: "error", text: error instanceof Error ? error.message : "Could not load activity." }); }
   }
 
-  if (!token || !user) return <main className="auth-page"><div className="auth-card"><a className="brand" href="/"><span className="brand-icon">o</span>opsflow</a><p className="eyebrow">INTERNAL OPERATIONS</p><h1>{authMode === "login" ? "Welcome back" : "Create your workspace account"}</h1><p className="auth-subtitle">Keep important work visible, owned, and moving.</p>{notice && <div className="notice error">{notice.text}</div>}<form onSubmit={authenticate} className="form-stack">{authMode === "register" && <label>Full name<input name="name" required minLength={2} autoComplete="name" /></label>}<label>Email address<input name="email" type="email" required autoComplete="email" /></label><label>Password<input name="password" type="password" required minLength={8} autoComplete={authMode === "login" ? "current-password" : "new-password"} /></label><button className="button primary full" type="submit">{authMode === "login" ? "Sign in" : "Create account"}</button></form><p className="auth-switch">{authMode === "login" ? "New to OpsFlow?" : "Already have an account?"} <button className="link-button" onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setNotice(null); }}>{authMode === "login" ? "Create account" : "Sign in"}</button></p><div className="auth-foot">Secure team workspace <span>•</span> API {loading ? "connecting" : "ready"}</div></div></main>;
+  function signOut() {
+    localStorage.removeItem("opsflow_token"); setToken(""); setUser(null); setItems([]);
+  }
 
-  return <div className="app-shell">
-    <aside className="sidebar"><a className="brand" href="#overview" onClick={() => setView("overview")}><span className="brand-icon">o</span>opsflow</a><div className="workspace-select"><span className="workspace-mark">{user.full_name.slice(0, 1).toUpperCase()}</span><span><strong>{user.full_name}</strong><small>Personal workspace</small></span><span className="chevron">⌄</span></div><div className="nav-section-label">WORKSPACE</div><button className={`nav-item ${view === "overview" ? "active" : ""}`} onClick={() => setView("overview")}><span className="nav-symbol">◫</span>Overview</button><button className={`nav-item ${view === "work" ? "active" : ""}`} onClick={() => setView("work")}><span className="nav-symbol">▤</span>Work items<span className="nav-count">{openCount}</span></button><div className="nav-section-label team-label">YOUR TEAMS</div>{teams.map((team) => <div className="team-nav" key={team.id}><span className="team-dot" />{team.name}<span className="role-label">{team.role === "admin" ? "ADM" : ""}</span></div>)}<button className="team-add" onClick={() => setShowTeam(true)}>＋ Create a team</button><div className="sidebar-bottom"><div className="connection-label"><span className="status-dot connected" />Connected to OpsFlow API</div><button className="profile" onClick={() => { localStorage.removeItem("opsflow_token"); setToken(""); setUser(null); setItems([]); }}><span className="avatar">{user.full_name.slice(0, 1).toUpperCase()}</span><span><strong>{user.full_name}</strong><small>{user.email}</small></span><span className="logout">↪</span></button></div></aside>
-    <main className="main-content"><header className="topbar"><div className="breadcrumb">Workspace <span>/</span> {view === "overview" ? "Overview" : "Work items"}</div><div className="top-actions"><span className="today-label">{new Intl.DateTimeFormat("en", { weekday: "short", month: "short", day: "numeric" }).format(new Date())}</span><button className="avatar small-avatar" title={user.full_name}>{user.full_name.slice(0, 1).toUpperCase()}</button></div></header>
-      <section className="content"><div className="page-heading"><div><p className="eyebrow">YOUR WORKSPACE</p><h1>{view === "overview" ? "Good work starts here." : "Work items"}</h1><p>{view === "overview" ? "A clear view of what needs doing and what needs your attention." : "Track ownership, priority, and progress in one place."}</p></div><button className="button primary" onClick={() => setShowCreate(true)}><span>＋</span> New work item</button></div>
-      {notice && <div className={`notice ${notice.kind}`} role="status">{notice.text}<button onClick={() => setNotice(null)} aria-label="Dismiss">×</button></div>}
-      {view === "overview" && <><div className="summary-grid"><article className="metric-card"><span className="metric-icon green">▤</span><div><span className="metric-label">Active work</span><strong>{openCount}</strong><small>Items that are not complete</small></div></article><article className="metric-card"><span className="metric-icon amber">◷</span><div><span className="metric-label">Needs attention</span><strong>{blockedCount + urgentCount}</strong><small>Blocked or urgent items</small></div></article><article className="metric-card"><span className="metric-icon blue">✓</span><div><span className="metric-label">Completed</span><strong>{items.filter((item) => item.status === "done").length}</strong><small>Resolved work items</small></div></article></div><div className="welcome-strip"><div className="welcome-symbol">✳</div><div><strong>Keep the important work moving</strong><p>Create a work item to give a request clear ownership, urgency, and a history your team can trust.</p></div><button className="text-action" onClick={() => setShowCreate(true)}>Create an item <span>↗</span></button></div></>}
-      <div className="list-heading"><div><p className="eyebrow">THE QUEUE</p><h2>{view === "overview" ? "Recent work" : "All work items"}<span className="item-count">{visibleItems.length}</span></h2></div><div className="filters"><label className="search-box"><span>⌕</span><input aria-label="Search work" placeholder="Search work..." value={query} onChange={(event) => setQuery(event.target.value)} /><kbd>⌘ K</kbd></label><select aria-label="Filter by status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All statuses</option><option value="open">Open</option><option value="in_progress">In progress</option><option value="blocked">Blocked</option><option value="done">Done</option></select></div></div>
-      {visibleItems.length ? <div className="work-list">{visibleItems.map((item) => <article className="work-row" key={item.id}><div className={`priority-mark ${item.priority}`} title={`${item.priority} priority`} /><button className="work-main" onClick={() => void openActivity(item)}><strong>{item.title}</strong><span>{item.description || "No description provided"}</span></button><span className={`status-pill ${item.status}`}>{item.status.replace("_", " ")}</span><span className={`priority-label ${item.priority}`}>{item.priority}</span><span className="date-label">{new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(new Date(item.created_at))}</span><select className="status-select" aria-label={`Change ${item.title} status`} value={item.status} onChange={(event) => void changeStatus(item, event.target.value as Item["status"])}><option value="open">Open</option><option value="in_progress">In progress</option><option value="blocked">Blocked</option><option value="done">Done</option></select></article>)}</div> : <div className="empty-state"><div className="empty-art">✳</div><strong>{query || statusFilter !== "all" ? "No matching work" : "Nothing on the board yet"}</strong><p>{query || statusFilter !== "all" ? "Try a different search or status filter." : "Capture the request, set its priority, and make sure it has a clear owner."}</p>{!query && statusFilter === "all" && <button className="button secondary" onClick={() => setShowCreate(true)}>Create first work item</button>}</div>}
-      <footer className="page-footer"><span>OpsFlow <span className="footer-dot">·</span> Work that stays visible.</span><span>{loading ? "Syncing..." : "All changes saved"}</span></footer></section></main>
-    {showCreate && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowCreate(false); }}><section className="modal"><div className="modal-head"><div><p className="eyebrow">NEW REQUEST</p><h2>Create a work item</h2></div><button className="icon-button" onClick={() => setShowCreate(false)}>×</button></div><form className="form-stack" onSubmit={createItem}><label>Title<input name="title" required maxLength={200} placeholder="What needs to be done?" autoFocus /></label><label>Context<textarea name="description" rows={4} placeholder="Add details that will help someone move this forward." /></label><div className="form-pair"><label>Priority<select name="priority"><option value="medium">Medium</option><option value="low">Low</option><option value="high">High</option><option value="urgent">Urgent</option></select></label>{teams.length > 0 && <label>Team<select name="team_id"><option value="">Personal</option>{teams.map((team) => <option value={team.id} key={team.id}>{team.name}</option>)}</select></label>}</div><div className="modal-actions"><button type="button" className="button secondary" onClick={() => setShowCreate(false)}>Cancel</button><button type="submit" className="button primary">Create item</button></div></form></section></div>}
-    {showTeam && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowTeam(false); }}><section className="modal"><div className="modal-head"><div><p className="eyebrow">TEAM SPACE</p><h2>Create a team</h2></div><button className="icon-button" onClick={() => setShowTeam(false)}>×</button></div><p className="modal-copy">You will be the team administrator. Team membership management can be added as the workspace grows.</p><form className="form-stack" onSubmit={createTeam}><label>Team name<input name="name" required minLength={2} maxLength={120} placeholder="e.g. Customer operations" /></label><div className="modal-actions"><button type="button" className="button secondary" onClick={() => setShowTeam(false)}>Cancel</button><button type="submit" className="button primary">Create team</button></div></form></section></div>}
-    {selected && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}><section className="modal activity-modal"><div className="modal-head"><div><p className="eyebrow">WORK ITEM #{selected.id}</p><h2>{selected.title}</h2></div><button className="icon-button" onClick={() => setSelected(null)}>×</button></div><p className="activity-description">{selected.description || "No description provided."}</p><div className="activity-meta"><span className={`status-pill ${selected.status}`}>{selected.status.replace("_", " ")}</span><span className={`priority-label ${selected.priority}`}>{selected.priority} priority</span></div><h3 className="activity-heading">Activity</h3>{activity.length ? <div className="activity-list">{activity.map((entry) => <div className="activity-entry" key={entry.id}><span className="activity-dot"/><div><strong>{entry.action === "created" ? "Work item created" : "Work item updated"}</strong><p>{entry.action === "updated" ? `Changed ${(entry.details.fields as string[] || []).join(", ")}` : "Item added to the workspace"}</p><small>{new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(entry.created_at))}</small></div></div>)}</div> : <p className="activity-empty">Activity will appear here as work changes.</p>}</section></div>}
-  </div>;
+  const noticeBar = notice && (
+    <div className={`notice ${notice.kind}`} role="status">
+      <span>{notice.text}</span>
+      <button onClick={() => setNotice(null)} aria-label="Dismiss">Dismiss</button>
+    </div>
+  );
+
+  if (!token || !user) {
+    const isLogin = authMode === "login";
+    return (
+      <div className="auth">
+        <div className="auth-top">
+          <span className="brand">opsflow</span>
+          {themeButton}
+        </div>
+        <main className="auth-body">
+          <h1>{isLogin ? "Sign in" : "Create an account"}</h1>
+          <p className="lede">Keep track of what needs doing, and who is doing it.</p>
+          {noticeBar}
+          <form onSubmit={authenticate} className="form-stack">
+            {!isLogin && <label>Full name<input name="name" required minLength={2} autoComplete="name" /></label>}
+            <label>Email<input name="email" type="email" required autoComplete="email" /></label>
+            <label>Password<input name="password" type="password" required minLength={8} autoComplete={isLogin ? "current-password" : "new-password"} /></label>
+            <button className="button primary full" type="submit">{isLogin ? "Sign in" : "Create account"}</button>
+          </form>
+          <p className="switch">
+            {isLogin ? "New here?" : "Already have an account?"}{" "}
+            <button className="text-button" onClick={() => { setAuthMode(isLogin ? "register" : "login"); setNotice(null); }}>{isLogin ? "Create an account" : "Sign in"}</button>
+          </p>
+        </main>
+      </div>
+    );
+  }
+
+  const firstName = user.full_name.split(" ")[0];
+  const filtering = Boolean(query) || statusFilter !== "all";
+
+  return (
+    <div className="page">
+      <header className="header">
+        <a className="brand" href="#overview" onClick={() => setView("overview")}>opsflow</a>
+        <nav className="nav" aria-label="Main">
+          <button className={view === "overview" ? "on" : ""} onClick={() => setView("overview")}>Overview</button>
+          <button className={view === "work" ? "on" : ""} onClick={() => setView("work")}>Work<span className="count">{openCount}</span></button>
+        </nav>
+        <div className="header-end">
+          {loading && <span className="sync">Syncing…</span>}
+          {themeButton}
+          <button className="text-button" onClick={signOut} title={user.email}>Sign out</button>
+        </div>
+      </header>
+
+      <main className="main">
+        <div className="heading">
+          <div>
+            <h1>{view === "overview" ? `Hi, ${firstName}` : "Work"}</h1>
+            {view === "overview" && (
+              <p className="lede">
+                {items.length === 0
+                  ? "Nothing here yet. Add the first thing that needs doing."
+                  : `${openCount} open${attentionCount ? `, ${attentionCount} need${attentionCount === 1 ? "s" : ""} attention` : ""}, ${doneCount} done.`}
+              </p>
+            )}
+          </div>
+          <button className="button primary" onClick={() => setShowCreate(true)}>New item</button>
+        </div>
+
+        {noticeBar}
+
+        <div className="teams">
+          <span className="teams-label">Teams</span>
+          {teams.map((team) => <span className="team" key={team.id}>{team.name}{team.role === "admin" && <em>admin</em>}</span>)}
+          <button className="text-button" onClick={() => setShowTeam(true)}>{teams.length ? "New team" : "Create a team"}</button>
+        </div>
+
+        <div className="toolbar">
+          <input className="search" type="search" aria-label="Search work" placeholder="Search" value={query} onChange={(event) => setQuery(event.target.value)} />
+          <select aria-label="Filter by status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+            <option value="all">All statuses</option>
+            {Object.entries(STATUS_LABEL).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+          </select>
+        </div>
+
+        {visibleItems.length ? (
+          <ul className="list">
+            {visibleItems.map((item) => (
+              <li className="row" key={item.id}>
+                <button className="row-main" onClick={() => void openActivity(item)}>
+                  <span className="row-title">{item.title}</span>
+                  <span className="row-desc">{item.description || "No description"}</span>
+                </button>
+                <div className="row-meta">
+                  <span className={`priority ${item.priority}`}>{item.priority}</span>
+                  <span className="date">{shortDate(item.created_at)}</span>
+                  <select className={`status ${item.status}`} aria-label={`Change status of ${item.title}`} value={item.status} onChange={(event) => void changeStatus(item, event.target.value as Item["status"])}>
+                    {Object.entries(STATUS_LABEL).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+                  </select>
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="empty">
+            <strong>{filtering ? "Nothing matches" : "No work items yet"}</strong>
+            <p>{filtering ? "Try a different search or status." : "Add a request, set how urgent it is, and it will show up here."}</p>
+            {!filtering && <button className="button secondary" onClick={() => setShowCreate(true)}>Add the first item</button>}
+          </div>
+        )}
+      </main>
+
+      {showCreate && (
+        <div className="backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowCreate(false); }}>
+          <section className="modal" role="dialog" aria-modal="true" aria-labelledby="create-title">
+            <div className="modal-head">
+              <h2 id="create-title">New work item</h2>
+              <button className="icon-button" onClick={() => setShowCreate(false)} aria-label="Close"><CloseIcon /></button>
+            </div>
+            <form className="form-stack" onSubmit={createItem}>
+              <label>Title<input name="title" required maxLength={200} placeholder="What needs to be done?" autoFocus /></label>
+              <label>Details<textarea name="description" rows={4} placeholder="Anything that helps someone pick this up." /></label>
+              <div className="form-pair">
+                <label>Priority<select name="priority"><option value="medium">Medium</option><option value="low">Low</option><option value="high">High</option><option value="urgent">Urgent</option></select></label>
+                {teams.length > 0 && <label>Team<select name="team_id"><option value="">Personal</option>{teams.map((team) => <option value={team.id} key={team.id}>{team.name}</option>)}</select></label>}
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="button secondary" onClick={() => setShowCreate(false)}>Cancel</button>
+                <button type="submit" className="button primary">Create item</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {showTeam && (
+        <div className="backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowTeam(false); }}>
+          <section className="modal" role="dialog" aria-modal="true" aria-labelledby="team-title">
+            <div className="modal-head">
+              <h2 id="team-title">New team</h2>
+              <button className="icon-button" onClick={() => setShowTeam(false)} aria-label="Close"><CloseIcon /></button>
+            </div>
+            <p className="modal-copy">You will be the team’s admin. Adding members will come later.</p>
+            <form className="form-stack" onSubmit={createTeam}>
+              <label>Team name<input name="name" required minLength={2} maxLength={120} placeholder="e.g. Customer operations" autoFocus /></label>
+              <div className="modal-actions">
+                <button type="button" className="button secondary" onClick={() => setShowTeam(false)}>Cancel</button>
+                <button type="submit" className="button primary">Create team</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {selected && (
+        <div className="backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}>
+          <section className="modal" role="dialog" aria-modal="true" aria-labelledby="item-title">
+            <div className="modal-head">
+              <h2 id="item-title">{selected.title}</h2>
+              <button className="icon-button" onClick={() => setSelected(null)} aria-label="Close"><CloseIcon /></button>
+            </div>
+            <p className="modal-copy">{selected.description || "No description."}</p>
+            <p className="facts">
+              <span className={`status-text ${selected.status}`}>{STATUS_LABEL[selected.status]}</span>
+              <span className={`priority ${selected.priority}`}>{selected.priority} priority</span>
+              <span>#{selected.id}</span>
+            </p>
+            <h3 className="activity-heading">Activity</h3>
+            {activity.length ? (
+              <ul className="activity-list">
+                {activity.map((entry) => (
+                  <li className="activity-entry" key={entry.id}>
+                    <strong>{entry.action === "created" ? "Created" : "Updated"}</strong>
+                    <span>{entry.action === "updated" ? `Changed ${((entry.details.fields as string[]) || []).join(", ")}` : "Added to the workspace"}</span>
+                    <small>{new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(entry.created_at))}</small>
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="activity-empty">No activity yet.</p>}
+          </section>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default App;

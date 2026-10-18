@@ -1,15 +1,60 @@
+@import url("https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&display=swap");
+
 :root {
-  font-family: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: #28372e;
-  background: #f8f9f7;
+  color-scheme: light;
+  --bg: #fbfbfa;
+  --surface: #ffffff;
+  --hover: #f3f3f1;
+  --line: #e7e7e3;
+  --text: #1c1e1c;
+  --muted: #666b67;
+  --faint: #959a96;
+  --accent: #2f5d4a;
+  --accent-ink: #ffffff;
+  --danger: #b4493a;
+  --warn: #9a661a;
+  --scrim: rgba(20, 24, 21, 0.35);
+
+  font-family: "Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #131514;
+  --surface: #1a1c1b;
+  --hover: #1d201e;
+  --line: #2a2d2b;
+  --text: #e9ebe8;
+  --muted: #9aa09b;
+  --faint: #6c736d;
+  --accent: #86b99b;
+  --accent-ink: #0f1a14;
+  --danger: #e0806f;
+  --warn: #d6a35a;
+  --scrim: rgba(0, 0, 0, 0.6);
+}
+
 * { box-sizing: border-box; }
-body { min-width: 320px; min-height: 100vh; margin: 0; }
-button,input,textarea,select { font: inherit; }
-button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible { outline: 3px solid #abc5ae; outline-offset: 2px; }
+body { min-width: 320px; min-height: 100vh; margin: 0; background: var(--bg); color: var(--text); }
+button, input, textarea, select { font: inherit; color: inherit; }
 a { color: inherit; }
+select option { background: var(--surface); color: var(--text); }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Circular theme reveal: the new theme is clipped to a growing circle (see App.tsx). */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-old(root) { z-index: 1; }
+::view-transition-new(root) { z-index: 2; }
