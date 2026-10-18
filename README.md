@@ -18,7 +18,7 @@ OpsFlow is a small operations workspace for capturing requests, setting priority
 - API: FastAPI, SQLAlchemy 2, Pydantic.
 - Database: SQLite for local development; PostgreSQL for a persistent deployment.
 - Schema migrations: Alembic.
-- Deployment: static frontend and API deployed as separate services, backed by managed PostgreSQL.
+- Deployment: Vercel Services for the frontend and API, backed by Neon PostgreSQL.
 
 ## Run locally
 
@@ -61,27 +61,43 @@ From `backend`, run the API tests with `pytest -q`. From `frontend`, run `npm ru
 
 The API tests cover registration and login, team and resource visibility, stale write rejection, and persisted activity history.
 
-## Deploy the website
+## Deploy with Vercel and Neon
 
-Deploy the frontend and API as separate services. This uses the providers' native Node.js and Python runtimes with a managed PostgreSQL database; no container build is needed.
+The repository's root `vercel.json` configures two Vercel services: the Vite frontend and the FastAPI backend. Neon provides the persistent PostgreSQL database. Keep the Vercel project root at the repository root so Vercel can read `vercel.json` and both service directories.
 
-### Render API and database
+### Configure Neon
 
-1. Create a managed PostgreSQL database in Render and copy its **internal** connection string.
-2. Create a Render **Web Service** from this repository, set the root directory to `backend`, and select the native **Python** runtime.
-3. Use `pip install -r requirements.txt` as the build command.
-4. Use `alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT` as the start command. Migrations run before the API accepts traffic.
-5. Set `DATABASE_URL` to the Render PostgreSQL connection string, `JWT_SECRET_KEY` to a newly generated secret of at least 32 random characters, and `CORS_ORIGINS` to the exact production URL of the frontend (for example, `https://opsflow.vercel.app`). Set the health check path to `/api/health`.
+1. Create a Neon project and database.
+2. In Neon **Connect**, copy the PostgreSQL connection string. Use the pooled connection string for the serverless Vercel backend, and keep the URL private.
+3. From PowerShell, run the existing Alembic migrations against Neon from the `backend` directory. Supply the Neon URL and the same JWT secret you will configure in Vercel:
 
-The API accepts `postgres://` and `postgresql://` URLs and selects the psycopg driver. Keep secrets in the hosting provider's environment settings. Use a managed database with automated backups; the local SQLite file is for development only.
+   ```powershell
+   cd backend
+   $env:DATABASE_URL = "your Neon connection string"
+   $env:JWT_SECRET_KEY = "your deployment JWT secret"
+   python -m alembic upgrade head
+   ```
 
-### Vercel frontend
+   The successful output should show both revisions under `backend/alembic/versions` being applied. This creates the schema in Neon; `alembic upgrade head` does not create or modify migration script files. Run migrations again after adding a future migration.
 
-1. Create a Vercel project from the same repository and set the root directory to `frontend`.
-2. Use `npm run build` as the build command and `dist` as the output directory.
-3. Add `VITE_API_BASE_URL` with the public base URL of the Render API, such as `https://opsflow-api.onrender.com` (no trailing slash), then deploy.
+### Configure Vercel
 
-For another static hosting provider, publish `frontend/dist` and set `VITE_API_BASE_URL` to the API's public URL. Add the deployed frontend origin to the API's comma-separated `CORS_ORIGINS` setting. The Vite variable is included in browser code, so it should contain only the public API URL, never a secret.
+1. Import the repository as a Vercel project and leave the **Root Directory** set to the repository root.
+2. In the project's framework/build settings, select **Services**. The `services` configuration in `vercel.json` is used only when the project is configured to build as Services.
+3. Add these environment variables to each deployment environment you use (at least **Production**):
+
+   | Variable | Value |
+   | --- | --- |
+   | `DATABASE_URL` | Neon pooled PostgreSQL connection string |
+   | `JWT_SECRET_KEY` | A unique, random secret (at least 32 characters) |
+
+   Do not add the database URL or JWT secret as `VITE_` variables; those would be exposed to browser code. The frontend calls the backend through same-origin `/api` routes, so `VITE_API_BASE_URL` is not needed for this Vercel setup.
+4. Deploy or redeploy after saving the environment variables. The API uses `DATABASE_URL` instead of the local SQLite default when it connects to the database.
+5. Check `https://<your-deployment-domain>/api/health`. Then register an account and sign in.
+
+For local development, SQLite remains the default. Never use Vercel's local function filesystem as the production database: it is not durable or shared between function instances. The settings code accepts Neon `postgres://` and `postgresql://` URLs and selects the psycopg driver.
+
+For a separate frontend host and API host, set `VITE_API_BASE_URL` to the public API base URL and configure the API's `CORS_ORIGINS` with the frontend origin.
 
 ## API overview
 

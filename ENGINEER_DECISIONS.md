@@ -26,11 +26,11 @@ Creating an item writes its creation event in the same transaction. Updating an 
 
 **Trade-off:** activity is synchronous because it is a correctness record for the primary operation. Notifications and enrichment are not implemented; if added, they should run asynchronously from a durable outbox so a failed worker does not erase a committed work item.
 
-## 5. Deploy the frontend and API as separate services
+## 5. Deploy the frontend and API with Vercel Services and Neon
 
-The Vite frontend is built as static files and hosted on a static-site platform. FastAPI runs as a native Python web service, and PostgreSQL is managed separately. The frontend receives the API's public URL through `VITE_API_BASE_URL`; the API allows the deployed frontend origin through `CORS_ORIGINS`.
+The root `vercel.json` defines the Vite frontend and FastAPI backend as Vercel Services, with `/api` requests routed to the backend and other requests routed to the frontend. The Vercel project must use the repository root and have its framework set to Services. Neon PostgreSQL provides durable shared storage; Vercel environment variables provide `DATABASE_URL` and `JWT_SECRET_KEY`. Alembic migrations are applied to Neon separately with `python -m alembic upgrade head` from `backend`.
 
-**Trade-off:** each service can be deployed and scaled independently, but the deployment requires correct frontend/API URLs, explicit CORS configuration, and coordinated environment settings.
+**Trade-off:** the same-origin routing avoids a public API URL in frontend configuration and CORS setup, while database migrations and environment variables must be managed for each deployment environment. SQLite remains for local development only because Vercel function storage is not persistent database storage.
 
 ## Assumptions and intentionally deferred work
 
