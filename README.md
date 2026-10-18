@@ -6,9 +6,9 @@ OpsFlow is a small operations workspace for capturing requests, setting priority
 
 - Email and password registration and sign-in with bearer-token authentication.
 - Personal work items and team workspaces. A team creator becomes its admin; admins can invite existing accounts through the team API.
-- Work item create, list, search, status and priority filters, and status changes.
+- Work item creation, listing, search, status and priority filters, and status changes.
 - Team-scoped visibility enforced by the API. A user can see personal items they created or are assigned, plus work in their teams.
-- Append-only creation and update activity entries, stored in the same database transaction as an update.
+- Creation and update activity entries, stored in the same database transaction as each item change.
 - Optimistic concurrency: every item update supplies its current `version`; stale updates receive HTTP `409` and the UI refreshes the workspace.
 - Server-side list pagination. The UI requests a bounded first page rather than loading an unbounded collection.
 
@@ -18,7 +18,7 @@ OpsFlow is a small operations workspace for capturing requests, setting priority
 - API: FastAPI, SQLAlchemy 2, Pydantic.
 - Database: SQLite for local development; PostgreSQL for a persistent deployment.
 - Schema migrations: Alembic.
-- Deployment: multi-stage Docker image serving the frontend and API from one origin.
+- Deployment: static frontend and API deployed as separate services, backed by managed PostgreSQL.
 
 ## Run locally
 
@@ -61,30 +61,27 @@ From `backend`, run the API tests with `pytest -q`. From `frontend`, run `npm ru
 
 The API tests cover registration and login, team and resource visibility, stale write rejection, and persisted activity history.
 
-## Deploy with Docker
+## Deploy the website
 
-The root `Dockerfile` compiles the frontend, installs the API, and packages them together. The app serves the compiled site and API from the same address. Startup applies Alembic migrations before accepting traffic.
+Deploy the frontend and API as separate services. This uses the providers' native Node.js and Python runtimes with a managed PostgreSQL database; no container build is needed.
 
-```sh
-docker build -t opsflow .
-docker run --rm -p 8000:8000 \
-  -e JWT_SECRET_KEY="replace-with-a-long-random-secret" \
-  -e DATABASE_URL="sqlite:////data/opsflow.db" \
-  -v opsflow-data:/data \
-  opsflow
-```
+### Render API and database
 
-For a persistent public deployment, attach a managed PostgreSQL database and set `DATABASE_URL` to its connection string. The app accepts `postgres://` and `postgresql://` URLs and selects the psycopg driver. Keep `JWT_SECRET_KEY` in the hosting provider's secret store. Use a managed database with automated backups; do not use the container's filesystem for production SQLite data. Configure the platform health check to `GET /api/health` and expose the service's assigned port.
+1. Create a managed PostgreSQL database in Render and copy its **internal** connection string.
+2. Create a Render **Web Service** from this repository, set the root directory to `backend`, and select the native **Python** runtime.
+3. Use `pip install -r requirements.txt` as the build command.
+4. Use `alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT` as the start command. Migrations run before the API accepts traffic.
+5. Set `DATABASE_URL` to the Render PostgreSQL connection string, `JWT_SECRET_KEY` to a newly generated secret of at least 32 random characters, and `CORS_ORIGINS` to the exact production URL of the frontend (for example, `https://opsflow.vercel.app`). Set the health check path to `/api/health`.
 
-### Render deployment
+The API accepts `postgres://` and `postgresql://` URLs and selects the psycopg driver. Keep secrets in the hosting provider's environment settings. Use a managed database with automated backups; the local SQLite file is for development only.
 
-1. Push this repository to your Git provider and create a Render **Web Service** from it.
-2. Choose the **Docker** runtime and leave the Dockerfile path as `./Dockerfile`.
-3. Create a managed PostgreSQL database in Render and copy its **internal** connection string into the web service's `DATABASE_URL` environment variable.
-4. Add `JWT_SECRET_KEY` as a generated secret (at least 32 random characters). The single-origin setup does not need a production `CORS_ORIGINS` value.
-5. Set the health check path to `/api/health` and deploy. The container runs database migrations on startup; `/` serves the website.
+### Vercel frontend
 
-For any hosting platform, use its supported PostgreSQL URL and secret manager. The container listens on `PORT` when the platform provides it.
+1. Create a Vercel project from the same repository and set the root directory to `frontend`.
+2. Use `npm run build` as the build command and `dist` as the output directory.
+3. Add `VITE_API_BASE_URL` with the public base URL of the Render API, such as `https://opsflow-api.onrender.com` (no trailing slash), then deploy.
+
+For another static hosting provider, publish `frontend/dist` and set `VITE_API_BASE_URL` to the API's public URL. Add the deployed frontend origin to the API's comma-separated `CORS_ORIGINS` setting. The Vite variable is included in browser code, so it should contain only the public API URL, never a secret.
 
 ## API overview
 
@@ -108,7 +105,7 @@ See [ENGINEER_DECISIONS.md](ENGINEER_DECISIONS.md) for the main trade-offs and a
 
 ## Known limitations
 
-- Team members can be added by email only after they register; invitations, offboarding, and richer role administration are not implemented.
+- Team members can be added by email only after they register; email invitations, offboarding, and richer role administration are not implemented.
 - Password reset, email verification, login throttling, and token revocation are not implemented. Use a managed secret and HTTPS in a deployment.
 - The browser stores the bearer token in local storage. A production identity review may prefer secure, same-site cookies and a CSRF strategy.
 - Activity currently covers item creation and updates, and identifies actors by ID. Comment threads and richer human-readable diffs are future work.

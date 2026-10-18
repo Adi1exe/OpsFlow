@@ -26,11 +26,11 @@ Creating an item writes its creation event in the same transaction. Updating an 
 
 **Trade-off:** activity is synchronous because it is a correctness record for the primary operation. Notifications and enrichment are not implemented; if added, they should run asynchronously from a durable outbox so a failed worker does not erase a committed work item.
 
-## 5. Keep the first deployment to one web origin
+## 5. Deploy the frontend and API as separate services
 
-The Docker build compiles the React app and packages it with FastAPI. FastAPI serves the static site and API from the same origin, and the container applies Alembic migrations before starting the server. This reduces deployment configuration and avoids a separate frontend/API CORS setup.
+The Vite frontend is built as static files and hosted on a static-site platform. FastAPI runs as a native Python web service, and PostgreSQL is managed separately. The frontend receives the API's public URL through `VITE_API_BASE_URL`; the API allows the deployed frontend origin through `CORS_ORIGINS`.
 
-**Trade-off:** the API and static frontend scale together. If traffic patterns later diverge, the frontend can be moved to a CDN while the API keeps explicit origin allow-lists.
+**Trade-off:** each service can be deployed and scaled independently, but the deployment requires correct frontend/API URLs, explicit CORS configuration, and coordinated environment settings.
 
 ## Assumptions and intentionally deferred work
 
